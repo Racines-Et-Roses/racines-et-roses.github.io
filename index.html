@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Racines & Roses</title>
+<meta name="robots" content="noindex,nofollow">
+<meta name="description" content="De kaart van Nederlandstalige vrouwen in Frankrijk.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌹</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="gate" class="gate" hidden>
+  <form id="gateForm" class="gate-card">
+    <div class="gate-rose" aria-hidden="true">🌹</div>
+    <h1>Racines <span class="amp">&amp;</span> Roses</h1>
+    <p>De kaart van Nederlandstalige vrouwen in Frankrijk. Vul het groepswachtwoord in dat in de Facebookgroep staat.</p>
+    <input id="gatePw" type="password" autocomplete="current-password" placeholder="Groepswachtwoord" aria-label="Groepswachtwoord" required>
+    <button type="submit" class="btn">Naar de kaart</button>
+    <p id="gateErr" class="err" hidden>Dat wachtwoord klopt niet. Probeer het nog eens.</p>
+  </form>
+</div>
+
+<div id="app" class="app" hidden>
+  <aside class="panel">
+    <header class="brand">
+      <h1>Racines <span class="amp">&amp;</span> Roses</h1>
+      <p id="tagline">Vriendinnen vinden in je Franse regio</p>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="ontdek" aria-selected="true">Ontdek</button>
+      <button role="tab" data-tab="buurt" aria-selected="false">In de buurt</button>
+      <button role="tab" data-tab="stats" aria-selected="false">Cijfers</button>
+    </nav>
+
+    <div class="panel-body">
+      <section id="tab-ontdek" class="tab">
+        <div class="search">
+          <input id="q" type="search" placeholder="Zoek op naam, dorp of wat dan ook…" aria-label="Zoeken" autocomplete="off">
+        </div>
+        <div id="activeFilters" class="active-filters"></div>
+        <h3 class="label">Interesses &amp; situatie</h3>
+        <div id="chips" class="chips"></div>
+        <div class="result-head">
+          <span id="resultCount"></span>
+          <button id="clearFilters" class="link" hidden>Wis filters</button>
+        </div>
+        <ul id="list" class="list"></ul>
+        <button id="more" class="btn-ghost wide" hidden>Meer tonen</button>
+      </section>
+
+      <section id="tab-buurt" class="tab" hidden>
+        <p class="hint">Vul je dorp of postcode in, gebruik je locatie, of klik ergens op de kaart.</p>
+        <div class="place">
+          <input id="place" type="search" placeholder="Bijv. Loudun of 86200" aria-label="Dorp of postcode" autocomplete="off">
+          <ul id="placeSugg" class="sugg" hidden></ul>
+        </div>
+        <button id="locate" class="btn-ghost wide">📍 Gebruik mijn locatie</button>
+        <label class="radius">
+          <span>Straal <strong id="radiusVal">30 km</strong></span>
+          <input id="radius" type="range" min="5" max="150" step="5" value="30">
+        </label>
+        <div id="nearSummary" class="near-summary"></div>
+        <ul id="nearList" class="list"></ul>
+      </section>
+
+      <section id="tab-stats" class="tab" hidden>
+        <div id="stats"></div>
+      </section>
+    </div>
+
+    <footer class="foot">
+      Live uit de <a id="gmapLink" target="_blank" rel="noopener">Google-kaart van de groep</a>.
+      Nieuw lid? Vraag Hillegon om een pin.
+    </footer>
+  </aside>
+
+  <main class="mapwrap">
+    <div id="map" aria-label="Kaart"></div>
+    <div id="legend" class="legend" hidden></div>
+    <article id="card" class="card" hidden aria-live="polite"></article>
+    <div id="loading" class="loading">Kaart laden…</div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
