@@ -228,7 +228,11 @@ h1, h2, h3 { font-family: Fraunces, Georgia, serif; font-weight: 650; margin: 0;
   .brand h1 { font-size: 22px; }
   .brand p { display: none; }
   .tab { padding: 14px 16px 20px; }
-  .foot { display: none; }
+  /* Op mobiel scrolt het hele paneel, zodat de voettekst onder de lijst staat. */
+  .panel { overflow-y: auto; }
+  .panel-body { flex: none; overflow: visible; }
+  .tabs { position: sticky; top: 0; background: var(--paper); z-index: 5; }
+  .foot { padding: 14px 16px calc(18px + env(safe-area-inset-bottom)); }
   .card { position: fixed; top: auto; left: 0; right: 0; bottom: 0; width: 100%; max-height: 82dvh; border-radius: 20px 20px 0 0; animation-name: rise; }
   @keyframes rise { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
   .legend { bottom: 26px; }

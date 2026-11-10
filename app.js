@@ -492,6 +492,7 @@ function switchTab(tab) {
   map.getContainer().style.cursor = tab === 'buurt' ? 'crosshair' : '';
   refreshMarkers();
   $('.panel-body').scrollTop = 0;
+  $('.panel').scrollTop = 0;
 }
 
 /* ================= Events ================= */
