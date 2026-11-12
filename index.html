@@ -32,19 +32,21 @@
     <header class="brand">
       <h1>Racines <span class="amp">&amp;</span> Roses</h1>
       <p id="tagline">Vriendinnen vinden in je Franse regio</p>
+      <p id="dataNote" class="data-note" role="status" hidden></p>
     </header>
 
     <nav class="tabs" role="tablist">
-      <button role="tab" data-tab="ontdek" aria-selected="true">Ontdek</button>
-      <button role="tab" data-tab="buurt" aria-selected="false">In de buurt</button>
-      <button role="tab" data-tab="stats" aria-selected="false">Cijfers</button>
+      <button role="tab" id="t-ontdek" data-tab="ontdek" aria-controls="tab-ontdek" aria-selected="true">Ontdek</button>
+      <button role="tab" id="t-buurt" data-tab="buurt" aria-controls="tab-buurt" aria-selected="false" tabindex="-1">In de buurt</button>
+      <button role="tab" id="t-stats" data-tab="stats" aria-controls="tab-stats" aria-selected="false" tabindex="-1">Cijfers</button>
     </nav>
 
     <div class="panel-body">
-      <section id="tab-ontdek" class="tab">
+      <section id="tab-ontdek" class="tab" role="tabpanel" aria-labelledby="t-ontdek">
         <div class="search">
           <input id="q" type="search" placeholder="Zoek op naam, dorp of wat dan ook…" aria-label="Zoeken" autocomplete="off">
         </div>
+        <button id="newBanner" class="new-banner" hidden></button>
         <div id="activeFilters" class="active-filters"></div>
         <h3 class="label">Interesses &amp; situatie</h3>
         <div id="chips" class="chips"></div>
@@ -52,17 +54,25 @@
           <span id="resultCount"></span>
           <button id="clearFilters" class="link" hidden>Wis filters</button>
         </div>
+        <label class="sort">Volgorde
+          <select id="sort">
+            <option value="new">Nieuwste eerst</option>
+            <option value="old">Oudste eerst</option>
+            <option value="az">Naam A–Z</option>
+          </select>
+        </label>
         <ul id="list" class="list"></ul>
         <button id="more" class="btn-ghost wide" hidden>Meer tonen</button>
       </section>
 
-      <section id="tab-buurt" class="tab" hidden>
+      <section id="tab-buurt" class="tab" role="tabpanel" aria-labelledby="t-buurt" hidden>
         <p class="hint">Vul je dorp of postcode in, gebruik je locatie, of klik ergens op de kaart.</p>
         <div class="place">
           <input id="place" type="search" placeholder="Bijv. Loudun of 86200" aria-label="Dorp of postcode" autocomplete="off">
           <ul id="placeSugg" class="sugg" hidden></ul>
         </div>
         <button id="locate" class="btn-ghost wide">📍 Gebruik mijn locatie</button>
+        <p id="nearNotice" class="notice" role="alert" hidden></p>
         <label class="radius">
           <span>Straal <strong id="radiusVal">30 km</strong></span>
           <input id="radius" type="range" min="5" max="150" step="5" value="30">
@@ -71,7 +81,7 @@
         <ul id="nearList" class="list"></ul>
       </section>
 
-      <section id="tab-stats" class="tab" hidden>
+      <section id="tab-stats" class="tab" role="tabpanel" aria-labelledby="t-stats" hidden>
         <div id="stats"></div>
       </section>
     </div>
@@ -86,8 +96,8 @@
   <main class="mapwrap">
     <div id="map" aria-label="Kaart"></div>
     <div id="legend" class="legend" hidden></div>
-    <article id="card" class="card" hidden aria-live="polite"></article>
-    <div id="loading" class="loading">Kaart laden…</div>
+    <article id="card" class="card" tabindex="-1" aria-label="Profiel" hidden></article>
+    <div id="loading" class="loading" role="status">Kaart laden…</div>
   </main>
 </div>
 

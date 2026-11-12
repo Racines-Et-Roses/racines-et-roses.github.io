@@ -7,6 +7,9 @@ const GMAP_URL = `https://www.google.com/maps/d/viewer?mid=${MAP_ID}`;
 // SHA-256 van het groepswachtwoord (kleine letters, zonder spaties eromheen).
 const PASSWORD_HASH = '5abfff6a745dd79f0bb51c3b80f3a00de3c3c78c426dfcd81d9c685dd7fe60e6';
 const PAGE = 60;
+const CACHE_KEY = 'rr-data';   // laatst opgehaalde kaartdata, voor direct beeld en als Google niet reageert
+const SEEN_KEY = 'rr-seen';    // wie er bij eerdere bezoeken al op de kaart stond
+const VISIT_GAP = 12 * 3600 * 1000; // na 12 uur telt een bezoek als een nieuw bezoek
 
 /* Interesses: label + zoekpatroon op de bio (kleine letters, zonder accenten). */
 const TAGS = [
@@ -75,7 +78,10 @@ async function sha256(s) {
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 function storageGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
-function storageSet(k, v) { try { localStorage.setItem(k, v); } catch { /* privémodus */ } }
+function storageSet(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; /* privémodus of vol */ } }
+function storageJson(k) { try { return JSON.parse(storageGet(k)); } catch { return null; } }
+const keyOf = r => `${r.name}|${r.town}|${r.lat.toFixed(3)},${r.lng.toFixed(3)}`;
+const fmtDate = t => new Date(t).toLocaleDateString('nl-NL', { day: 'numeric', month: 'long' });
 
 /* ================= Wachtwoord ================= */
 function initGate() {
@@ -128,16 +134,22 @@ function parseKml(text) {
     const raw = (pm.getElementsByTagName('name')[0]?.textContent || '').trim();
     const { name, town } = splitName(raw);
     const { bio, fb } = cleanBio(pm.getElementsByTagName('description')[0]?.textContent || '');
-    const id = out.length;
-    const n = norm(`${bio}`);
-    out.push({
-      id, name, town, bio, fb, lat, lng, ll: [lat, lng],
-      text: norm(`${name} ${town} ${bio}`),
-      tags: TAGS.filter(([, re]) => re.test(n)).map(([l]) => l),
-      color: AVATAR_COLORS[(name.charCodeAt(0) || 0) % AVATAR_COLORS.length],
-    });
+    out.push({ name, town, bio, fb, lat, lng });
   });
   return out;
+}
+
+/* Maakt van een kale rij een lid met alles wat de pagina nodig heeft.
+   De id is de volgorde in de Google-kaart: hoger = later toegevoegd. */
+function hydrate(r, id) {
+  const n = norm(r.bio);
+  return {
+    ...r, id, key: keyOf(r), ll: [r.lat, r.lng],
+    text: norm(`${r.name} ${r.town} ${r.bio}`),
+    tags: TAGS.filter(([, re]) => re.test(n)).map(([l]) => l),
+    color: AVATAR_COLORS[(r.name.charCodeAt(0) || 0) % AVATAR_COLORS.length],
+    isNew: false,
+  };
 }
 
 /* ================= Départementen ================= */
@@ -185,12 +197,14 @@ function findDept(lat, lng) {
 /* ================= Toestand ================= */
 let people = [];
 const state = {
-  tab: 'ontdek', q: '', tags: new Set(), dept: null,
+  tab: 'ontdek', q: '', tags: new Set(), dept: null, onlyNew: false, sort: 'new',
   shown: PAGE, near: null, radius: 30, selected: null,
 };
 let map, clusters, nearLayer, deptLayer, selMarker;
+let statsDirty = true, newSince = null, lastFocus = null;
 
 function matches(p) {
+  if (state.onlyNew && !p.isNew) return false;
   if (state.dept && p.dept?.code !== state.dept) return false;
   for (const t of state.tags) if (!p.tags.includes(t)) return false;
   if (state.q) {
@@ -198,7 +212,7 @@ function matches(p) {
   }
   return true;
 }
-const filtersActive = () => !!(state.q || state.tags.size || state.dept);
+const filtersActive = () => !!(state.q || state.tags.size || state.dept || state.onlyNew);
 
 /* ================= Kaart ================= */
 function initMap() {
@@ -227,7 +241,7 @@ const pinIconSel = L.divIcon({ html: '<div class="pin sel"></div>', className: '
 
 function buildMarkers() {
   people.forEach(p => {
-    p.marker = L.marker(p.ll, { icon: pinIcon, title: `${p.name} – ${p.town}`, riseOnHover: true });
+    p.marker = L.marker(p.ll, { icon: pinIcon, title: `${p.name} – ${p.town}`, alt: `${p.name} – ${p.town}`, riseOnHover: true });
     p.marker.on('click', () => openCard(p, { fly: false }));
   });
 }
@@ -244,7 +258,7 @@ function renderChips() {
   people.forEach(p => { if (matchesExceptTags(p)) p.tags.forEach(t => counts[t] = (counts[t] || 0) + 1); });
   const order = TAGS.map(([l]) => l).sort((a, b) => (state.tags.has(b) - state.tags.has(a)) || ((counts[b] || 0) - (counts[a] || 0)));
   $('#chips').innerHTML = order.map(l =>
-    `<button class="chip${state.tags.has(l) ? ' on' : ''}" data-tag="${esc(l)}">${esc(l)} <span class="n">${counts[l] || 0}</span></button>`
+    `<button class="chip${state.tags.has(l) ? ' on' : ''}" aria-pressed="${state.tags.has(l)}" data-tag="${esc(l)}">${esc(l)} <span class="n">${counts[l] || 0}</span></button>`
   ).join('');
 }
 function matchesExceptTags(p) {
@@ -260,16 +274,20 @@ function renderActiveFilters() {
     const d = depts.find(x => x.code === state.dept);
     bits.push(`<button class="chip pill-x" data-clear="dept">${esc(d ? d.nom : state.dept)} ✕</button>`);
   }
+  if (state.onlyNew) bits.push(`<button class="chip pill-x" data-clear="new">Nieuw sinds je vorige bezoek ✕</button>`);
   $('#activeFilters').innerHTML = bits.join('');
   $('#clearFilters').hidden = !filtersActive();
+  const nNew = people.filter(p => p.isNew).length, banner = $('#newBanner');
+  banner.hidden = !nNew || state.onlyNew;
+  if (nNew) banner.innerHTML = `<b>${nNew} ${nNew === 1 ? 'nieuwe vrouw' : 'nieuwe vrouwen'}</b> sinds je vorige bezoek${newSince ? ` op ${fmtDate(newSince)}` : ''} <span>Bekijk ›</span>`;
 }
 
 function liHtml(p, km) {
   const snip = p.bio ? esc(p.bio.slice(0, 160)) : '';
-  return `<li data-id="${p.id}"${state.selected === p ? ' class="active"' : ''}>
+  return `<li data-id="${p.id}" tabindex="0" role="button"${state.selected === p ? ' class="active"' : ''}>
     <div class="avatar" style="background:${p.color}">${esc((p.name[0] || '?').toUpperCase())}</div>
     <div class="li-main">
-      <div class="li-top"><span class="li-name">${esc(p.name)}</span>${km != null ? `<span class="li-km">${fmtKm(km)}</span>` : ''}</div>
+      <div class="li-top"><span class="li-name">${esc(p.name)}${p.isNew ? ' <span class="badge-new">Nieuw</span>' : ''}</span>${km != null ? `<span class="li-km">${fmtKm(km)}</span>` : ''}</div>
       <div class="li-town">${esc(p.town)}${p.dept ? ` · ${esc(p.dept.nom)}` : ''}</div>
       ${snip ? `<div class="li-snip">${snip}</div>` : ''}
     </div></li>`;
@@ -277,6 +295,8 @@ function liHtml(p, km) {
 
 function renderList() {
   const res = people.filter(matches);
+  if (state.sort === 'new') res.sort((a, b) => b.id - a.id);
+  else if (state.sort === 'az') res.sort((a, b) => a.name.localeCompare(b.name, 'nl') || a.town.localeCompare(b.town, 'nl'));
   $('#resultCount').textContent = filtersActive()
     ? `${res.length} van ${people.length} vrouwen`
     : `Alle ${people.length} vrouwen`;
@@ -415,7 +435,7 @@ function renderStats() {
       <div class="kpi"><div class="v">${top ? top.count : 0}</div><div class="k">in ${esc(top ? top.nom : '-')}, de koploper</div></div>
     </div>
     <h3 class="label">Top 10 départements</h3>
-    <ul class="bars">${sorted.slice(0, 10).map(d => bar(d.nom, d.code, d.count, `data-dept="${d.code}"`)).join('')}</ul>
+    <ul class="bars">${sorted.slice(0, 10).map(d => bar(d.nom, d.code, d.count, `data-dept="${d.code}" tabindex="0" role="button"`)).join('')}</ul>
     <p class="note">Klik op een département (hier of op de kaart) om te zien wie er woont.</p>
     <h3 class="label">Per regio</h3>
     <ul class="bars">${regSorted.map(([r, c]) => `<li style="cursor:default"><span class="nm">${esc(r)}</span><span class="ct">${c}</span><span class="bar"><i style="width:${(c / regMax * 100).toFixed(1)}%"></i></span></li>`).join('')}</ul>
@@ -429,7 +449,8 @@ function renderStats() {
 }
 
 /* ================= Profielkaart ================= */
-function openCard(p, { fly = true } = {}) {
+function openCard(p, { fly = true, focus = true } = {}) {
+  if ($('#card').hidden) lastFocus = document.activeElement;
   state.selected = p;
   if (selMarker) selMarker.setIcon(pinIcon);
   selMarker = p.marker; selMarker.setIcon(pinIconSel);
@@ -440,7 +461,7 @@ function openCard(p, { fly = true } = {}) {
     <div class="card-head">
       <div class="avatar" style="background:${p.color}">${esc((p.name[0] || '?').toUpperCase())}</div>
       <div>
-        <h2>${esc(p.name)}</h2>
+        <h2>${esc(p.name)}${p.isNew ? ' <span class="badge-new">Nieuw</span>' : ''}</h2>
         <div class="where">${esc(p.town)}${p.dept ? ` · ${esc(p.dept.nom)} (${p.dept.code})` : ''}${km != null ? ` · ${fmtKm(km)} van ${esc(state.near.label)}` : ''}</div>
       </div>
     </div>
@@ -454,12 +475,15 @@ function openCard(p, { fly = true } = {}) {
     </div>`;
   card.querySelector('.bio').textContent = p.bio || 'Nog geen voorstelling geschreven.';
   card.hidden = false;
-  card.querySelector('.card-close').onclick = closeCard;
+  card.setAttribute('aria-label', `Profiel van ${p.name}`);
+  if (focus) card.focus({ preventScroll: true });
+  card.querySelector('.card-close').onclick = () => closeCard();
   card.querySelector('[data-act="near"]').onclick = () => {
     switchTab('buurt');
     $('#place').value = `${p.name} – ${p.town}`;
-    closeCard();
+    closeCard({ restoreFocus: false });
     setNear(p.ll, `${p.name} (${p.town})`, p.id);
+    $('#t-buurt').focus({ preventScroll: true });
   };
   document.querySelectorAll('.list li.active').forEach(li => li.classList.remove('active'));
   document.querySelectorAll(`.list li[data-id="${p.id}"]`).forEach(li => li.classList.add('active'));
@@ -472,8 +496,11 @@ function openCard(p, { fly = true } = {}) {
     });
   }
 }
-function closeCard() {
+function closeCard({ restoreFocus = true } = {}) {
+  const wasOpen = !$('#card').hidden;
   $('#card').hidden = true;
+  if (wasOpen && restoreFocus && lastFocus && document.contains(lastFocus)) lastFocus.focus({ preventScroll: true });
+  lastFocus = null;
   if (selMarker) selMarker.setIcon(pinIcon);
   selMarker = null; state.selected = null;
   document.querySelectorAll('.list li.active').forEach(li => li.classList.remove('active'));
@@ -482,11 +509,17 @@ function closeCard() {
 /* ================= Tabs ================= */
 function switchTab(tab) {
   state.tab = tab;
-  document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
+  document.querySelectorAll('.tabs button').forEach(b => {
+    b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+    b.tabIndex = b.dataset.tab === tab ? 0 : -1;
+  });
   ['ontdek', 'buurt', 'stats'].forEach(t => $(`#tab-${t}`).hidden = t !== tab);
   const stats = tab === 'stats';
-  if (stats) { deptLayer.addTo(map); closeCard(); map.flyTo([46.6, 2.4], window.innerWidth < 800 ? 5 : 6, { duration: .6 }); }
-  else deptLayer.remove();
+  if (stats) {
+    if (statsDirty) { renderStats(); statsDirty = false; }
+    deptLayer?.addTo(map); closeCard({ restoreFocus: false });
+    map.flyTo([46.6, 2.4], window.innerWidth < 800 ? 5 : 6, { duration: .6 });
+  } else deptLayer?.remove();
   $('#legend').hidden = !stats;
   nearLayer[!stats && state.near ? 'addTo' : 'remove'](map);
   map.getContainer().style.cursor = tab === 'buurt' ? 'crosshair' : '';
@@ -497,7 +530,19 @@ function switchTab(tab) {
 
 /* ================= Events ================= */
 function bindEvents() {
-  document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+  const tabBtns = [...document.querySelectorAll('.tabs button')];
+  tabBtns.forEach((b, i) => {
+    b.addEventListener('click', () => switchTab(b.dataset.tab));
+    b.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      const next = tabBtns[(i + (e.key === 'ArrowRight' ? 1 : -1) + tabBtns.length) % tabBtns.length];
+      switchTab(next.dataset.tab); next.focus();
+    });
+  });
+  $('#sort').addEventListener('change', e => { state.sort = e.target.value; state.shown = PAGE; renderList(); });
+  $('#newBanner').addEventListener('click', () => { state.onlyNew = true; onFiltersChanged(); });
+  $('#dataNote').addEventListener('click', e => { if (e.target.closest('[data-act="retry"]')) refresh(); });
+  $('#loading').addEventListener('click', e => { if (e.target.closest('[data-act="retry"]')) refresh(); });
 
   $('#q').addEventListener('input', debounce(e => { state.q = e.target.value.trim(); onFiltersChanged(); }, 150));
   $('#chips').addEventListener('click', e => {
@@ -508,9 +553,10 @@ function bindEvents() {
   });
   $('#activeFilters').addEventListener('click', e => {
     if (e.target.closest('[data-clear="dept"]')) { state.dept = null; onFiltersChanged(); }
+    if (e.target.closest('[data-clear="new"]')) { state.onlyNew = false; onFiltersChanged(); }
   });
   $('#clearFilters').addEventListener('click', () => {
-    state.q = ''; state.tags.clear(); state.dept = null; $('#q').value = ''; onFiltersChanged();
+    state.q = ''; state.tags.clear(); state.dept = null; state.onlyNew = false; $('#q').value = ''; onFiltersChanged();
   });
   $('#more').addEventListener('click', () => { state.shown += PAGE; renderList(); });
 
@@ -521,6 +567,13 @@ function bindEvents() {
     if (li) { openCard(people[+li.dataset.id]); return; }
     const d = e.target.closest('[data-dept]');
     if (d) filterDept(d.dataset.dept);
+  });
+
+  // Lijstregels werken ook met Enter of spatie
+  document.querySelector('.panel-body').addEventListener('keydown', e => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const row = e.target.closest('li[data-id], li[data-dept]');
+    if (row && row === e.target) { e.preventDefault(); row.click(); }
   });
 
   // Plaats zoeken
@@ -544,15 +597,19 @@ function bindEvents() {
   place.addEventListener('blur', () => setTimeout(() => sugg.hidden = true, 150));
 
   $('#locate').addEventListener('click', () => {
-    if (!navigator.geolocation) return alert('Je browser kan je locatie niet delen.');
-    const btn = $('#locate'); btn.textContent = 'Locatie zoeken…';
+    const note = $('#nearNotice'), btn = $('#locate');
+    const fail = msg => { note.textContent = msg; note.hidden = false; };
+    note.hidden = true;
+    if (!navigator.geolocation) return fail('Je browser kan je locatie niet delen. Typ je dorp in of klik op de kaart.');
+    btn.textContent = 'Locatie zoeken…'; btn.disabled = true;
+    const done = () => { btn.textContent = '📍 Gebruik mijn locatie'; btn.disabled = false; };
     navigator.geolocation.getCurrentPosition(pos => {
-      btn.textContent = '📍 Gebruik mijn locatie';
+      done();
       place.value = 'Mijn locatie';
       setNear([pos.coords.latitude, pos.coords.longitude], 'jouw locatie');
     }, () => {
-      btn.textContent = '📍 Gebruik mijn locatie';
-      alert('Je locatie kon niet worden opgehaald. Typ je dorp in of klik op de kaart.');
+      done();
+      fail('Je locatie kon niet worden opgehaald. Typ je dorp in of klik op de kaart.');
     }, { enableHighAccuracy: false, timeout: 10000 });
   });
 
@@ -567,32 +624,93 @@ function bindEvents() {
 }
 const renderNearDebounced = debounce(() => renderNear(), 120);
 
+/* ================= Data laden ================= */
+
+/* Zet een (nieuwe) set leden op de pagina. Wordt vaker aangeroepen:
+   eerst met de bewaarde data, daarna met de verse data van Google. */
+function setPeople(raw) {
+  const selKey = state.selected?.key;
+  closeCard({ restoreFocus: false });
+  depts.forEach(d => d.count = 0);
+  const seen = storageJson(SEEN_KEY);
+  const base = seen?.prev ? new Set(seen.prev.keys) : null;
+  newSince = seen?.prev?.t || null;
+  people = raw.map((r, i) => {
+    const p = hydrate(r, i);
+    p.dept = findDept(p.lat, p.lng);
+    if (p.dept) p.dept.count++;
+    p.isNew = !!base && !base.has(p.key);
+    return p;
+  });
+  if (!people.some(p => p.isNew)) state.onlyNew = false;
+  buildMarkers();
+  deptLayer?.remove();
+  buildDeptLayer();
+  statsDirty = true;
+  if (state.tab === 'stats') { renderStats(); statsDirty = false; deptLayer.addTo(map); }
+  $('#tagline').textContent = `${people.length} Nederlandstalige vrouwen in Frankrijk`;
+  onFiltersChanged();
+  if (selKey) { const p = people.find(x => x.key === selKey); if (p) openCard(p, { fly: false, focus: false }); }
+}
+
+/* Onthoudt wie er bij dit bezoek op de kaart staat, zodat een volgend bezoek kan tonen wie er nieuw is. */
+function rememberVisit(raw) {
+  const now = Date.now(), keys = raw.map(keyOf), seen = storageJson(SEEN_KEY);
+  if (!seen?.cur) storageSet(SEEN_KEY, JSON.stringify({ cur: { t: now, keys }, prev: null }));
+  else if (now - seen.cur.t > VISIT_GAP) storageSet(SEEN_KEY, JSON.stringify({ cur: { t: now, keys }, prev: seen.cur }));
+}
+
+let shownJson = null, shownAt = null;
+function setDataNote(html) { const n = $('#dataNote'); n.innerHTML = html || ''; n.hidden = !html; }
+
+async function refresh() {
+  const hadData = people.length > 0;
+  if (hadData) setDataNote('Kaart verversen…');
+  else { $('#loading').hidden = false; $('#loading').textContent = 'Kaart laden…'; }
+  try {
+    const res = await fetch(KML_URL, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`KML ${res.status}`);
+    const raw = parseKml(await res.text());
+    if (!raw.length) throw new Error('Lege kaart');
+    const json = JSON.stringify(raw);
+    storageSet(CACHE_KEY, JSON.stringify({ t: Date.now(), people: raw }));
+    rememberVisit(raw);
+    if (json !== shownJson) { shownJson = json; setPeople(raw); }
+    shownAt = Date.now();
+    setDataNote('');
+    $('#loading').hidden = true;
+  } catch (err) {
+    console.error(err);
+    const retry = '<button class="link" data-act="retry">Opnieuw proberen</button>';
+    if (hadData) setDataNote(`Verversen lukte niet. Je ziet de kaart van ${shownAt ? fmtDate(shownAt) : 'eerder'}. ${retry}`);
+    else $('#loading').innerHTML = `<div>De kaart kon niet worden geladen.<br>${retry}</div>`;
+  }
+}
+
 /* ================= Start ================= */
 async function start() {
   $('#app').hidden = false;
   $('#gmapLink').href = GMAP_URL;
   initMap();
+  bindEvents();
+  // Houd de kaart passend als het venster of de indeling van formaat verandert.
+  if (window.ResizeObserver) new ResizeObserver(() => map.invalidateSize()).observe($('#map'));
+  else setTimeout(() => map.invalidateSize(), 50);
   try {
-    const [kml, gj] = await Promise.all([
-      fetch(KML_URL, { cache: 'no-store' }).then(r => { if (!r.ok) throw new Error(r.status); return r.text(); }),
-      fetch('departements.geojson').then(r => r.json()),
-    ]);
-    prepDepts(gj);
-    people = parseKml(kml);
-    people.forEach(p => { p.dept = findDept(p.lat, p.lng); if (p.dept) p.dept.count++; });
+    prepDepts(await fetch('departements.geojson').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }));
   } catch (err) {
     console.error(err);
     $('#loading').textContent = 'De kaart kon niet worden geladen. Probeer het later opnieuw.';
     return;
   }
-  $('#tagline').textContent = `${people.length} Nederlandstalige vrouwen in Frankrijk`;
-  buildMarkers();
-  buildDeptLayer();
-  bindEvents();
-  renderStats();
-  onFiltersChanged();
-  $('#loading').hidden = true;
-  setTimeout(() => map.invalidateSize(), 50);
+  // Eerst de bewaarde versie tonen (direct beeld), daarna verversen vanaf Google.
+  const cached = storageJson(CACHE_KEY);
+  if (cached?.people?.length) {
+    shownJson = JSON.stringify(cached.people); shownAt = cached.t;
+    setPeople(cached.people);
+    $('#loading').hidden = true;
+  }
+  await refresh();
 }
 
 initGate();
